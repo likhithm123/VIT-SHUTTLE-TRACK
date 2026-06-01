@@ -1,17 +1,17 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import WalletCard from '../components/WalletCard';
-import { activeAlerts, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor } from '../lib/demoData';
+import { activeAlerts, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor, runningShuttles } from '../lib/demoData';
+import { useAppState } from '../lib/useAppState';
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false });
 
 export default function Student() {
   const [user, setUser] = useState(null);
-  const [dbState, setDbState] = useState(null);
   const [shuttles, setShuttles] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [hotlistSecs, setHotlistSecs] = useState(0);
+  const { dbState, lastUpdated, syncMode, refresh } = useAppState({ enabled: true, pollMs: 1500 });
 
   useEffect(() => {
     const u = JSON.parse(localStorage.getItem('cs_user') || 'null');
@@ -20,50 +20,27 @@ export default function Student() {
       return;
     }
     setUser(u);
-    
-    // Initial fetch
-    refresh(u.id);
-
-    // Refresh every 1 second for better real-time synchronization
-    const timer = setInterval(() => refresh(u.id), 1000);
-    return () => clearInterval(timer);
   }, []);
 
-  async function refresh(currentUserId) {
-    const uid = currentUserId || user?.id;
-    if (!uid) return;
+  useEffect(() => {
+    const uid = user?.id;
+    if (!uid || !dbState?.users) return;
 
-    try {
-      const res = await fetch('/api/state');
-      if (res.ok) {
-        const state = await res.json();
-        setDbState(state);
+    const updatedUser = dbState.users.find((u) => u.id === uid);
+    if (updatedUser) setUser(updatedUser);
 
-        // Find updated user information (for live balance updates)
-        const updatedUser = state.users.find(u => u.id === uid);
-        if (updatedUser) {
-          setUser(updatedUser);
-        }
+    setShuttles((dbState.shuttles || []).map(normalizeShuttle));
 
-        // Normalize shuttles and transactions
-        const nextShuttles = (state.shuttles || []).map(normalizeShuttle);
-        setShuttles(nextShuttles);
-        setLastUpdated(new Date().toLocaleTimeString());
-
-        // Check if own card is hotlisted
-        const me = state.users?.find(u => u.id === uid);
-        if (me && me.cardUid && state.hotlist) {
-          const hotlistExpiry = state.hotlist[me.cardUid];
-          const secsLeft = hotlistExpiry ? Math.max(0, Math.ceil((hotlistExpiry - Date.now()) / 1000)) : 0;
-          setHotlistSecs(secsLeft);
-        } else {
-          setHotlistSecs(0);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to sync student data:', e);
+    const me = dbState.users.find((u) => u.id === uid);
+    if (me?.cardUid && dbState.hotlist) {
+      const hotlistExpiry = dbState.hotlist[me.cardUid];
+      setHotlistSecs(
+        hotlistExpiry ? Math.max(0, Math.ceil((Number(hotlistExpiry) - Date.now()) / 1000)) : 0
+      );
+    } else {
+      setHotlistSecs(0);
     }
-  }
+  }, [dbState, user?.id]);
 
   // Filter transactions (rides) for current user
   const transactions = (dbState?.transactions || [])
@@ -119,7 +96,9 @@ export default function Student() {
               <p style={{ color: 'var(--muted)', fontSize: '12px' }}>Mobile GPS + Live Shuttles</p>
               <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>Campus Live Map</h2>
             </div>
-            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>Live Sync</span>
+            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>
+              {syncMode === 'realtime' ? 'Live (Supabase)' : 'Syncing'}{lastUpdated ? ` · ${lastUpdated}` : ''}
+            </span>
           </div>
           {/* Hotlist banner */}
           {hotlistSecs > 0 && (
@@ -133,7 +112,7 @@ export default function Student() {
               </div>
             </div>
           )}
-          <MapView shuttles={shuttles} onSelect={setSelected} showRoutes={false} />
+          <MapView shuttles={runningShuttles(shuttles)} onSelect={setSelected} showRoutes={false} />
         </section>
 
         {/* Side Controls & Wallet & Stats */}

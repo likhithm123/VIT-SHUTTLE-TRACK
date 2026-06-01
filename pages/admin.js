@@ -1,18 +1,18 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
-import { activeAlerts, getFine, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor } from '../lib/demoData';
+import { activeAlerts, getFine, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor, runningShuttles } from '../lib/demoData';
+import { useAppState } from '../lib/useAppState';
 import AdminDriverProfile from '../components/AdminDriverProfile';
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false });
 
 export default function Admin() {
   const [user, setUser] = useState(null);
-  const [dbState, setDbState] = useState(null);
   const [shuttles, setShuttles] = useState([]);
   const [tab, setTab] = useState('students');
   const [reg, setReg] = useState('');
   const [driverReg, setDriverReg] = useState('');
-  const [lastUpdated, setLastUpdated] = useState('');
+  const { dbState, lastUpdated, syncMode, refresh } = useAppState({ enabled: true, pollMs: 1500 });
   
   // Alert form state
   const [showAlertForm, setShowAlertForm] = useState(false);
@@ -77,30 +77,12 @@ export default function Admin() {
       return;
     }
     setUser(u);
-    
-    // Initial fetch
-    refresh();
-
-    // Poll every 1 second for faster location synchronization
-    const timer = setInterval(refresh, 1000);
-    return () => clearInterval(timer);
   }, []);
 
-  async function refresh() {
-    try {
-      const res = await fetch('/api/state');
-      if (res.ok) {
-        const state = await res.json();
-        setDbState(state);
-
-        const buses = (state.shuttles || []).map(normalizeShuttle);
-        setShuttles(buses);
-        setLastUpdated(new Date().toLocaleTimeString());
-      }
-    } catch (e) {
-      console.error('Failed to sync admin state:', e);
-    }
-  }
+  useEffect(() => {
+    if (!dbState?.shuttles) return;
+    setShuttles((dbState.shuttles || []).map(normalizeShuttle));
+  }, [dbState]);
 
   async function handleAddStudent(e) {
     e.preventDefault();
@@ -446,7 +428,7 @@ export default function Admin() {
           </button>
           <button onClick={handleClearDummy} style={{ background: 'var(--ink)' }}>Clear Dummy Data</button>
           <button onClick={refresh} style={{ background: 'var(--green)' }}>Sync</button>
-          <span>Last sync: {lastUpdated || '-'}</span>
+          <span>Last sync: {lastUpdated || '-'} ({syncMode === 'realtime' ? 'Supabase live' : 'polling'})</span>
           <button onClick={logout} style={{ background: 'var(--ink)' }}>Logout</button>
         </div>
       </header>
@@ -487,7 +469,7 @@ export default function Admin() {
         </section>
         <section className="panel stat" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '10px' }}>
           <span>Running Now</span>
-          <b style={{ color: 'var(--blue)' }}>{shuttles.filter(s => s.status === 'running').length}</b>
+          <b style={{ color: 'var(--blue)' }}>{runningShuttles(shuttles).length}</b>
           <p>active status</p>
         </section>
         <section className="panel stat" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '10px' }}>
@@ -505,9 +487,11 @@ export default function Admin() {
         <section className="panel map-wide" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '12px' }}>
           <div className="section-head">
             <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>Operational Shuttle Map</h2>
-            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>Live Sync</span>
+            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>
+              {syncMode === 'realtime' ? 'Live (Supabase)' : 'Syncing'}
+            </span>
           </div>
-          <MapView shuttles={shuttles} followSelf={false} />
+          <MapView shuttles={runningShuttles(shuttles)} followSelf={false} />
         </section>
 
         {/* User tabs panel */}

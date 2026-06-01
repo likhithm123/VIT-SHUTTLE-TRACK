@@ -260,7 +260,6 @@ h2 { font-size: 18px; }
 .admin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 18px; }
 .stat b { display: block; margin: 8px 0; font-size: 30px; }
 .wide { grid-column: span 2; }
-
 .driver-search-result { grid-column: 1 / -1; background: white; padding: 24px; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
 .driver-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed var(--line); }
 .v-tag { background: var(--ink); color: white; padding: 6px 12px; border-radius: 6px; font-family: monospace; font-size: 14px; }
@@ -268,7 +267,6 @@ h2 { font-size: 18px; }
 .earn-card { padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--line); }
 .earn-card label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
 .earn-card span { font-size: 24px; font-weight: 900; color: var(--ink); }
-
 .map-wide { grid-column: span 3; }
 .tabs-panel { grid-column: span 1; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }

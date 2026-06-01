@@ -1,216 +1,142 @@
 -- Hardened Supabase schema for Campus Shuttle prototype
-
--- extensions
-create extension if not exists pgcrypto;
-
--- users
-create table users (
-  id uuid primary key default gen_random_uuid(),
-  email text unique,
-  name text,
-  role text not null check (role in ('student','driver','admin')),
-  reg_no text,
-  passout_year integer,
-  wallet numeric(12,2) default 0,
-  created_at timestamptz default now()
+-- 1. USERS PROFILE TABLE
+-- Links to Supabase Auth. 'id' matches auth.users UUID.
+CREATE TABLE public.users (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  role TEXT DEFAULT 'student' CHECK (role IN ('admin', 'student', 'driver')),
+  reg_no TEXT UNIQUE,
+  card_uid TEXT UNIQUE,
+  passout_year INTEGER,
+  needs_password_reset BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- nfc cards
-create table nfc_cards (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id) on delete cascade,
-  card_uid text unique not null,
-  created_at timestamptz default now()
+-- 2. WALLETS TABLE
+CREATE TABLE public.wallets (
+  user_id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  balance DECIMAL(12, 2) DEFAULT 0.00
 );
 
--- shuttles with cached latest location for fast reads
-create table shuttles (
-  id uuid primary key default gen_random_uuid(),
-  vehicle_number text unique,
-  driver_id uuid references users(id),
-  route text check (route in ('A','B')),
-  status text check (status in ('running','maintenance','not started')) default 'not started',
-  color text,
-  active boolean default true,
-  current_lat double precision,
-  current_lng double precision,
-  last_seen timestamptz
+-- 3. DUES TABLE
+CREATE TABLE public.dues (
+  user_id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  amount DECIMAL(12, 2) DEFAULT 0.00,
+  since TIMESTAMPTZ DEFAULT NOW()
 );
 
--- historical locations (time-series)
-create table locations (
-  id uuid primary key default gen_random_uuid(),
-  shuttle_id uuid references shuttles(id) on delete cascade,
-  lat double precision not null,
-  lng double precision not null,
-  recorded_at timestamptz default now()
+-- 4. SHUTTLES TABLE
+CREATE TABLE public.shuttles (
+  id TEXT PRIMARY KEY,
+  vehicle_no TEXT NOT NULL,
+  driver_id UUID REFERENCES public.users(id),
+  route TEXT DEFAULT 'A',
+  status TEXT DEFAULT 'not started',
+  lat FLOAT8,
+  lng FLOAT8,
+  heading FLOAT8 DEFAULT 0,
+  last_seen TIMESTAMPTZ DEFAULT NOW()
 );
 
--- transactions (payments)
-create table transactions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references users(id),
-  shuttle_id uuid references shuttles(id),
-  driver_id uuid references users(id),
-  amount numeric(12,2) not null,
-  status text check (status in ('pending','success','failed','refunded')) default 'pending',
-  balance_before numeric(12,2),
-  balance_after numeric(12,2),
-  payment_method text,
-  created_at timestamptz default now(),
-  metadata jsonb
+-- 5. TRANSACTIONS TABLE
+CREATE TABLE public.transactions (
+  id TEXT PRIMARY KEY,
+  user_id UUID REFERENCES public.users(id),
+  driver_id UUID,
+  shuttle_id TEXT,
+  route TEXT,
+  amount DECIMAL(10, 2),
+  status TEXT DEFAULT 'success',
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- wallet ledger for auditable wallet changes
-create table wallet_ledger (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id),
-  transaction_id uuid references transactions(id),
-  amount numeric(12,2) not null,
-  balance_before numeric(12,2),
-  balance_after numeric(12,2),
-  type text check (type in ('debit','credit','adjustment')),
-  created_at timestamptz default now(),
-  metadata jsonb
+-- 6. HOTLIST TABLE
+CREATE TABLE public.hotlist (
+  card_uid TEXT PRIMARY KEY,
+  expires_at BIGINT
 );
 
--- hotlist to prevent duplicate taps (temporary)
-create table hotlist (
-  id uuid primary key default gen_random_uuid(),
-  card_uid text,
-  until timestamptz
+-- 7. ALERTS TABLE
+CREATE TABLE public.alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  text TEXT NOT NULL,
+  audience TEXT DEFAULT 'all',
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- admin audit log
-create table audit_log (
-  id uuid primary key default gen_random_uuid(),
-  admin_id uuid references users(id),
-  action text not null,
-  object_type text,
-  object_id uuid,
-  details jsonb,
-  created_at timestamptz default now()
-);
+-- 8. ENABLE REALTIME (all synced tables)
+ALTER PUBLICATION supabase_realtime ADD TABLE shuttles;
+ALTER PUBLICATION supabase_realtime ADD TABLE wallets;
+ALTER PUBLICATION supabase_realtime ADD TABLE users;
+ALTER PUBLICATION supabase_realtime ADD TABLE dues;
+ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
+ALTER PUBLICATION supabase_realtime ADD TABLE alerts;
+ALTER PUBLICATION supabase_realtime ADD TABLE hotlist;
 
-create table alerts (
-  id uuid primary key default gen_random_uuid(),
-  text text not null,
-  audience text check (audience in ('all','student','driver')) default 'all',
-  expires_at timestamptz not null,
-  created_at timestamptz default now()
-);
+-- 9. HELPER: Automatic Wallet Creation Trigger
+CREATE OR REPLACE FUNCTION public.handle_new_user_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.wallets (user_id, balance) VALUES (NEW.id, 0);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Indexes for fast queries
-create index if not exists idx_locations_shuttle_recorded on locations (shuttle_id, recorded_at desc);
-create index if not exists idx_transactions_user_created on transactions (user_id, created_at desc);
-create index if not exists idx_hotlist_card_until on hotlist (card_uid, until desc);
-create index if not exists idx_nfc_card_uid on nfc_cards (card_uid);
-create index if not exists idx_alerts_expires on alerts (expires_at desc);
+CREATE TRIGGER on_user_profile_created
+  AFTER INSERT ON public.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_profile();
 
-do $$
-declare
-  green_driver uuid;
-  blue_driver uuid;
-begin
-  select id into green_driver from users where reg_no = 'DRV01' limit 1;
-  if green_driver is null then
-    insert into users (name, role, reg_no) values ('Ravi Green', 'driver', 'DRV01') returning id into green_driver;
-  end if;
+-- 10. ROW LEVEL SECURITY (authenticated clients + Realtime)
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wallets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dues ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shuttles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hotlist ENABLE ROW LEVEL SECURITY;
 
-  select id into blue_driver from users where reg_no = 'DRV02' limit 1;
-  if blue_driver is null then
-    insert into users (name, role, reg_no) values ('Kumar Blue', 'driver', 'DRV02') returning id into blue_driver;
-  end if;
+CREATE POLICY "users_select_own"
+  ON public.users FOR SELECT TO authenticated
+  USING (auth.uid() = id);
 
-  if not exists (select 1 from shuttles where vehicle_number = 'VIT-A-101') then
-    insert into shuttles (vehicle_number, driver_id, route, status, active, current_lat, current_lng, last_seen)
-    values ('VIT-A-101', green_driver, 'A', 'running', true, 12.9729, 79.1586, now());
-  end if;
+CREATE POLICY "users_select_authenticated"
+  ON public.users FOR SELECT TO authenticated
+  USING (true);
 
-  if not exists (select 1 from shuttles where vehicle_number = 'VIT-B-202') then
-    insert into shuttles (vehicle_number, driver_id, route, status, active, current_lat, current_lng, last_seen)
-    values ('VIT-B-202', blue_driver, 'B', 'running', true, 12.9724, 79.1552, now());
-  end if;
-end $$;
+CREATE POLICY "wallets_select_authenticated"
+  ON public.wallets FOR SELECT TO authenticated
+  USING (true);
 
--- Function: process a transaction atomically
-create or replace function sp_process_transaction(p_user_id uuid, p_shuttle_id uuid, p_amount numeric, p_card_uid text default null)
-returns json as $$
-declare
-  v_wallet numeric(12,2);
-  v_new numeric(12,2);
-  v_txid uuid;
-  v_driver uuid;
-  v_until timestamptz := now() + interval '10 seconds';
-begin
-  -- lock user row
-  select wallet into v_wallet from users where id = p_user_id for update;
-  if not found then
-    raise exception 'user not found';
-  end if;
+CREATE POLICY "dues_select_authenticated"
+  ON public.dues FOR SELECT TO authenticated
+  USING (true);
 
-  select driver_id into v_driver from shuttles where id = p_shuttle_id;
+CREATE POLICY "shuttles_select_authenticated"
+  ON public.shuttles FOR SELECT TO authenticated
+  USING (true);
 
-  v_new := v_wallet - p_amount;
+CREATE POLICY "transactions_select_authenticated"
+  ON public.transactions FOR SELECT TO authenticated
+  USING (true);
 
-  insert into transactions (user_id, shuttle_id, driver_id, amount, status, balance_before, balance_after, metadata)
-    values (
-      p_user_id,
-      p_shuttle_id,
-      v_driver,
-      p_amount,
-      'success',
-      v_wallet,
-      v_new,
-      json_build_object(
-        'card_uid', p_card_uid,
-        'route', (select route from shuttles where id = p_shuttle_id),
-        'vehicle_number', (select vehicle_number from shuttles where id = p_shuttle_id)
-      )
-    )
-    returning id into v_txid;
+CREATE POLICY "alerts_select_authenticated"
+  ON public.alerts FOR SELECT TO authenticated
+  USING (true);
 
-  insert into wallet_ledger (user_id, transaction_id, amount, balance_before, balance_after, type, metadata)
-    values (p_user_id, v_txid, p_amount, v_wallet, v_new, 'debit', json_build_object('shuttle_id', p_shuttle_id));
+CREATE POLICY "hotlist_select_authenticated"
+  ON public.hotlist FOR SELECT TO authenticated
+  USING (true);
 
-  update users set wallet = v_new where id = p_user_id;
+-- 11. INITIAL ADMIN SETUP
+-- Create admin@gmail.com in Authentication > Users with password admin123 (min 6 chars).
+-- Use that user's UUID from Authentication for the id below, or run signup once and paste the id.
+INSERT INTO public.users (id, name, role, reg_no, needs_password_reset)
+VALUES ('0cfdebc4-14de-45eb-b20a-9c2f66e2cdc7', 'Campus Admin', 'admin', 'ADMIN', false)
+ON CONFLICT (id) DO UPDATE 
+SET role = 'admin', reg_no = 'ADMIN';
 
-  if p_card_uid is not null then
-    insert into hotlist (card_uid, until) values (p_card_uid, v_until);
-  end if;
-
-  return json_build_object('ok', true, 'tx', v_txid, 'new_wallet', v_new);
-end;
-$$ language plpgsql security definer;
-
--- Function: refund a transaction (admin action)
-create or replace function sp_refund_transaction(p_tx_id uuid, p_admin_id uuid, p_reason text default null)
-returns json as $$
-declare
-  t record;
-  v_wallet numeric(12,2);
-  v_new numeric(12,2);
-begin
-  select * into t from transactions where id = p_tx_id for update;
-  if not found then
-    raise exception 'transaction not found';
-  end if;
-  if t.status = 'refunded' then
-    return json_build_object('ok', true, 'message', 'already refunded');
-  end if;
-
-  select wallet into v_wallet from users where id = t.user_id for update;
-  v_new := v_wallet + t.amount;
-
-  update transactions set status = 'refunded' where id = p_tx_id;
-  update users set wallet = v_new where id = t.user_id;
-
-  insert into wallet_ledger (user_id, transaction_id, amount, balance_before, balance_after, type, metadata)
-    values (t.user_id, p_tx_id, t.amount, v_wallet, v_new, 'credit', json_build_object('admin_id', p_admin_id, 'reason', p_reason));
-
-  insert into audit_log (admin_id, action, object_type, object_id, details)
-    values (p_admin_id, 'refund', 'transaction', p_tx_id, json_build_object('reason', p_reason));
-
-  return json_build_object('ok', true, 'new_wallet', v_new);
-end;
-$$ language plpgsql security definer;
+INSERT INTO public.wallets (user_id, balance)
+VALUES ('0cfdebc4-14de-45eb-b20a-9c2f66e2cdc7', 0)
+ON CONFLICT (user_id) DO NOTHING;

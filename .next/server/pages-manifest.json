@@ -3,9 +3,7 @@
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
   "/": "pages/index.js",
-  "/api/state": "pages/api/state.js",
-  "/driver": "pages/driver.js",
-  "/api/update-route": "pages/api/update-route.js",
+  "/api/login": "pages/api/login.js",
   "/admin": "pages/admin.js",
-  "/student": "pages/student.js"
+  "/api/state": "pages/api/state.js"
 }

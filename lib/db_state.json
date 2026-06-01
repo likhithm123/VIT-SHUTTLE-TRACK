@@ -9,15 +9,6 @@
       "needsPasswordReset": false
     },
     {
-      "id": "drv-1780242928335",
-      "role": "driver",
-      "name": "D1",
-      "regNo": "D1",
-      "cardUid": "D1",
-      "password": "12345",
-      "needsPasswordReset": false
-    },
-    {
       "id": "stu-1780242937459",
       "role": "student",
       "name": "A1",
@@ -38,20 +29,29 @@
       "needsPasswordReset": true
     },
     {
-      "id": "drv-1780244226755",
+      "id": "drv-1780287820549",
       "role": "driver",
-      "name": "D2",
-      "regNo": "D2",
-      "cardUid": "D2",
+      "name": "d1",
+      "regNo": "d1",
+      "cardUid": "d1",
       "password": "12345",
       "needsPasswordReset": false
+    },
+    {
+      "id": "drv-1780287847463",
+      "role": "driver",
+      "name": "d3",
+      "regNo": "d3",
+      "cardUid": "d3",
+      "password": "d3@123",
+      "needsPasswordReset": true
     }
   ],
   "wallets": {
-    "drv-1780242928335": 0,
-    "stu-1780242937459": 955,
+    "stu-1780242937459": 976,
     "stu-1780243838739": 0,
-    "drv-1780244226755": 0
+    "drv-1780287820549": 0,
+    "drv-1780287847463": 0
   },
   "dues": {
     "stu-1780243838739": {
@@ -61,26 +61,26 @@
   },
   "shuttles": [
     {
-      "id": "bus-1780242928335",
-      "vehicleNo": "TN23AA004",
-      "driverId": "drv-1780242928335",
-      "route": "C",
-      "status": "running",
-      "lat": 12.966965566543461,
-      "lng": 79.15401576344395,
-      "heading": 163.37104107115033,
-      "lastSeen": "2026-05-31T17:19:54.506Z"
-    },
-    {
-      "id": "bus-1780244226755",
-      "vehicleNo": "TN23AA003",
-      "driverId": "drv-1780244226755",
+      "id": "bus-1780287820550",
+      "vehicleNo": "ap03aq3114",
+      "driverId": "drv-1780287820549",
       "route": "A",
       "status": "running",
-      "lat": 13.1471478,
-      "lng": 79.096091,
-      "heading": 89.99999371335264,
-      "lastSeen": "2026-05-31T16:50:54.352Z"
+      "lat": 12.974861232365555,
+      "lng": 79.15742491153337,
+      "heading": 164.7194674131497,
+      "lastSeen": "2026-06-01T04:36:21.846Z"
+    },
+    {
+      "id": "bus-1780287847463",
+      "vehicleNo": "ap03bn3004",
+      "driverId": "drv-1780287847463",
+      "route": "B",
+      "status": "running",
+      "lat": 12.9724,
+      "lng": 79.1552,
+      "heading": 0,
+      "lastSeen": "2026-06-01T04:24:07.463Z"
     }
   ],
   "transactions": [
@@ -318,6 +318,22 @@
     "da:1e:7c:dc": 1780245332267
   },
   "ledger": [
+    {
+      "id": "LED-1780287566307",
+      "userId": "stu-1780242937459",
+      "type": "credit",
+      "amount": 20,
+      "note": "Wallet top-up by Admin",
+      "createdAt": "2026-06-01T04:19:26.307Z"
+    },
+    {
+      "id": "LED-1780287557432",
+      "userId": "stu-1780242937459",
+      "type": "credit",
+      "amount": 1,
+      "note": "Wallet top-up by Admin",
+      "createdAt": "2026-06-01T04:19:17.432Z"
+    },
     {
       "id": "LED-1780245357708",
       "userId": "stu-1780242937459",

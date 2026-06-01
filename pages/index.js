@@ -1,12 +1,13 @@
 import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { applyAuthSession } from '../lib/authSession';
 
 export default function Home() {
   const router = useRouter();
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  
+
   // Password reset flow for first time login
   const [showReset, setShowReset] = useState(false);
   const [tempUser, setTempUser] = useState(null);
@@ -18,18 +19,24 @@ export default function Home() {
     e.preventDefault();
     setError('');
     try {
-      const res = await fetch('/api/state', {
+      const isEmail = loginId.includes('@');
+      const res = await fetch(isEmail ? '/api/login' : '/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'login', loginId, password })
+        body: JSON.stringify(
+          isEmail
+            ? { email: loginId.trim(), password }
+            : { login: loginId, password }
+        ),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || 'Invalid user id or password');
         return;
       }
-      
+
       const user = data.user;
+      if (data.session) await applyAuthSession(data.session);
       if (user.needsPasswordReset) {
         setTempUser(user);
         setShowReset(true);
@@ -55,6 +62,11 @@ export default function Home() {
     }
     if (newPassword === `${tempUser.regNo}@123` || newPassword === 'admin@123') {
       setResetError('Please choose a different password than the default');
+      return;
+    }
+
+    if (String(newPassword).length < 6) {
+      setResetError('Password must be at least 6 characters');
       return;
     }
 

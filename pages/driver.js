@@ -1,6 +1,19 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
-import { activeAlerts, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor } from '../lib/demoData';
+import {
+  activeAlerts,
+  isShuttleRunning,
+  logout,
+  money,
+  normalizeShuttle,
+  normalizeShuttleStatus,
+  normalizeTx,
+  ROUTE_LABELS,
+  routeColor,
+  runningShuttles,
+} from '../lib/demoData';
+import { clearAuthSession } from '../lib/authSession';
+import { useAppState } from '../lib/useAppState';
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false });
 
@@ -10,10 +23,9 @@ export default function Driver() {
   const [status, setStatus] = useState('not started');
   const [shuttle, setShuttle] = useState(null);
   const [tx, setTx] = useState([]);
-  const [dbState, setDbState] = useState(null);
   const [studentRegSearch, setStudentRegSearch] = useState('');
   const [tap, setTap] = useState({ state: 'idle', text: 'NFC ready' });
-  const [lastUpdated, setLastUpdated] = useState('');
+  const { dbState, lastUpdated, syncMode, refresh } = useAppState({ enabled: true, pollMs: 1500 });
   const [nfcMode, setNfcMode] = useState('none'); // 'none' | 'mobile' | 'usb'
   const [usbDevice, setUsbDevice] = useState(null);
   const [nfcReader, setNfcReader] = useState(null);
@@ -35,19 +47,9 @@ export default function Driver() {
     }
     setUser(u);
     refs.current.user = u;
-    
-    // Initial fetch
-    refresh(u);
-
-    // Live update polling every 1 second for better real-time sync
-    const timer = setInterval(() => refresh(u), 1000);
-    
-    // Start GPS (real + fallback simulator)
-    startGps();
 
     return () => {
-      clearInterval(timer);
-      clearInterval(refs.current.gpsTimer);
+      stopGps();
       if (refs.current.hotlistTimer) clearInterval(refs.current.hotlistTimer);
       
       // Release wake lock on component unmount/logout
@@ -57,58 +59,89 @@ export default function Driver() {
     };
   }, []);
 
-  async function refresh(currentUser = user) {
-    const u = currentUser || user;
-    if (!u) return;
+  useEffect(() => {
+    const u = user;
+    if (!u || !dbState?.shuttles) return;
 
-    try {
-      const res = await fetch('/api/state');
-      if (res.ok) {
-        const state = await res.json();
-        setDbState(state);
+    const assignedShuttle = dbState.shuttles.find((s) => s.driverId === u.id);
+    setShuttle(assignedShuttle);
+    refs.current.shuttle = assignedShuttle;
 
-        // Find shuttle assigned to this driver
-        const assignedShuttle = state.shuttles.find(s => s.driverId === u.id);
-        setShuttle(assignedShuttle);
-        refs.current.shuttle = assignedShuttle;
-
-        if (assignedShuttle) {
-          setRoute(assignedShuttle.route);
-          setStatus(assignedShuttle.status);
-          // Set vehicle no input value if it hasn't been edited
-          if (!refs.current.editingVehicleNo) {
-            setVehicleNoInput(assignedShuttle.vehicleNo);
-          }
-          refs.current.route = assignedShuttle.route;
-          refs.current.status = assignedShuttle.status;
-        }
-
-        // Filter transactions for this driver
-        const rows = (state.transactions || [])
-          .map(normalizeTx)
-          .filter((t) => t.driverId === u.id);
-        setTx(rows);
-        setLastUpdated(new Date().toLocaleTimeString());
+    if (assignedShuttle) {
+      const st = normalizeShuttleStatus(assignedShuttle.status);
+      setRoute(assignedShuttle.route);
+      setStatus(st);
+      if (!refs.current.editingVehicleNo) {
+        setVehicleNoInput(assignedShuttle.vehicleNo);
       }
-    } catch (e) {
-      console.error('Failed to sync driver state:', e);
+      refs.current.route = assignedShuttle.route;
+      refs.current.status = st;
+      if (st === 'running') {
+        if (!refs.current.gpsTimer) startGps();
+      } else {
+        stopGps();
+      }
+    } else {
+      stopGps();
     }
+
+    setTx(
+      (dbState.transactions || [])
+        .map(normalizeTx)
+        .filter((t) => t.driverId === u.id)
+    );
+  }, [dbState, user]);
+
+  async function stopShuttleOnLogout() {
+    const bus = refs.current.shuttle;
+    if (!bus?.id) return;
+    try {
+      await fetch('/api/update-route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shuttle_id: bus.id, status: 'not started' }),
+      });
+    } catch (e) {
+      console.error('Failed to mark shuttle offline on logout:', e);
+    }
+  }
+
+  function stopGps() {
+    if (refs.current.gpsTimer) {
+      clearInterval(refs.current.gpsTimer);
+      refs.current.gpsTimer = null;
+    }
+  }
+
+  async function handleDriverLogout() {
+    stopGps();
+    releaseWakeLock();
+    refs.current.status = 'not started';
+    await stopShuttleOnLogout();
+    localStorage.removeItem('cs_user');
+    await clearAuthSession();
+    location.href = '/';
   }
 
   async function updateVehicleDetails(newMeta) {
     const bus = refs.current.shuttle;
     if (!bus) return;
-    
+
+    const nextStatus = normalizeShuttleStatus(newMeta.status ?? refs.current.status);
+    const isRunning = nextStatus === 'running';
+
     try {
       const payload = {
         shuttle_id: bus.id,
         route: newMeta.route || refs.current.route || 'A',
-        status: newMeta.status || refs.current.status || 'not started',
+        status: nextStatus,
         vehicle_number: newMeta.vehicleNo !== undefined ? newMeta.vehicleNo : bus.vehicleNo,
-        lat: newMeta.lat !== undefined ? newMeta.lat : bus.lat,
-        lng: newMeta.lng !== undefined ? newMeta.lng : bus.lng,
-        heading: newMeta.heading !== undefined ? newMeta.heading : bus.heading
+        heading: newMeta.heading !== undefined ? newMeta.heading : bus.heading,
       };
+      if (isRunning) {
+        payload.lat = newMeta.lat !== undefined ? newMeta.lat : bus.lat;
+        payload.lng = newMeta.lng !== undefined ? newMeta.lng : bus.lng;
+      }
 
       const res = await fetch('/api/update-route', {
         method: 'POST',
@@ -144,17 +177,17 @@ export default function Driver() {
   }
 
   function handleStatusSelect(e) {
-    const val = e.target.value;
+    const val = normalizeShuttleStatus(e.target.value);
     setStatus(val);
     refs.current.status = val;
-    updateVehicleDetails({ status: val });
-
-    // Request/Release Wake Lock based on status
     if (val === 'running') {
+      if (!refs.current.gpsTimer) startGps();
       requestWakeLock();
     } else {
+      stopGps();
       releaseWakeLock();
     }
+    updateVehicleDetails({ status: val });
   }
 
   async function requestWakeLock() {
@@ -210,10 +243,8 @@ export default function Driver() {
       const bus = refs.current.shuttle;
       const currentStatus = refs.current.status;
       const currentRoute = refs.current.route || 'A';
-      
-      // Fix: Location should update as long as driver is synced, 
-      // even if the ride hasn't started yet.
-      if (!bus) return;
+
+      if (!bus || normalizeShuttleStatus(currentStatus) !== 'running') return;
 
       // Attempt Real GPS
       if (navigator.geolocation) {
@@ -421,8 +452,8 @@ export default function Driver() {
         </div>
         <div className="bar-actions">
           <button onClick={() => refresh()} style={{ background: 'var(--blue)' }}>Sync</button>
-          <span>Last sync: {lastUpdated || '-'}</span>
-          <button onClick={logout} style={{ background: 'var(--ink)' }}>Logout</button>
+          <span>Last sync: {lastUpdated || '-'} ({syncMode === 'realtime' ? 'Supabase live' : 'polling'})</span>
+          <button onClick={handleDriverLogout} style={{ background: 'var(--ink)' }}>Logout</button>
         </div>
       </header>
 
@@ -433,9 +464,16 @@ export default function Driver() {
             <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>
               {shuttle ? `Active Vehicle: ${shuttle.vehicleNo}` : 'No Vehicle Assigned'}
             </h2>
-            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>Live Sync</span>
+            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>
+              {syncMode === 'realtime' ? 'Live (Supabase)' : 'Syncing'}
+            </span>
           </div>
-          <MapView shuttles={shuttle ? [shuttle] : []} />
+          <MapView shuttles={runningShuttles(shuttle ? [shuttle] : [])} />
+          {shuttle && !isShuttleRunning(shuttle) && (
+            <p className="muted" style={{ fontSize: '12px', padding: '8px 12px', margin: 0 }}>
+              Map marker hidden until status is <strong>Running</strong>.
+            </p>
+          )}
         </section>
 
         {/* Sidestack panels */}

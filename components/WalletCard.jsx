@@ -11,6 +11,7 @@ export default function WalletCard({ user, dbState, onRefresh }) {
   const [amountInput, setAmountInput] = useState('');
   const [confirmData, setConfirmData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Hotlist cooldown state
   const [cooldownTime, setCooldownTime] = useState(0);
@@ -21,9 +22,9 @@ export default function WalletCard({ user, dbState, onRefresh }) {
     setBalance(Number(dbState.wallets?.[user.id] || 0));
     setDue(dbState.dues?.[user.id] || null);
 
-    // Check cooldown for Student 1 ('REG1001')
-    if (user.regNo === 'REG1001' && dbState.hotlist) {
-      const cardUid = user.cardUid || 'CARD1001';
+    // Check cooldown for the current user's assigned NFC card
+    const cardUid = user.cardUid;
+    if (cardUid && dbState.hotlist) {
       const expiresAt = dbState.hotlist[cardUid];
       if (expiresAt) {
         const remaining = Math.ceil((expiresAt - Date.now()) / 1000);
@@ -128,7 +129,8 @@ export default function WalletCard({ user, dbState, onRefresh }) {
   async function handleConfirm() {
     if (!confirmData) return;
     const actionType = confirmData.type === 'add' ? 'add_money' : 'withdraw';
-    
+    setIsSubmitting(true);
+    setErrorMsg('');
     try {
       const res = await fetch('/api/state', {
         method: 'POST',
@@ -152,6 +154,8 @@ export default function WalletCard({ user, dbState, onRefresh }) {
       }
     } catch (e) {
       setErrorMsg('Connection error');
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -307,13 +311,15 @@ export default function WalletCard({ user, dbState, onRefresh }) {
           <div style={{ display: 'flex', gap: '8px', marginTop: '5px' }}>
             <button 
               onClick={handleConfirm} 
-              style={{ flex: 1, background: confirmData.type === 'add' ? 'var(--green)' : 'var(--blue)', minHeight: '34px', fontSize: '13px', fontWeight: '700' }}
+              disabled={isSubmitting}
+              style={{ flex: 1, background: confirmData.type === 'add' ? 'var(--green)' : 'var(--blue)', minHeight: '34px', fontSize: '13px', fontWeight: '700', opacity: isSubmitting ? 0.7 : 1 }}
             >
-              Confirm
+              {isSubmitting ? 'Processing...' : 'Confirm'}
             </button>
             <button 
               onClick={() => setConfirmData(null)} 
-              style={{ flex: 1, background: 'var(--ink)', minHeight: '34px', fontSize: '13px', fontWeight: '700' }}
+              disabled={isSubmitting}
+              style={{ flex: 1, background: 'var(--ink)', minHeight: '34px', fontSize: '13px', fontWeight: '700', opacity: isSubmitting ? 0.5 : 1 }}
             >
               Cancel
             </button>

@@ -31,16 +31,6 @@
       "static/chunks/webpack.js",
       "static/chunks/main.js",
       "static/chunks/pages/admin.js"
-    ],
-    "/driver": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/driver.js"
-    ],
-    "/student": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/student.js"
     ]
   },
   "ampFirstPages": []

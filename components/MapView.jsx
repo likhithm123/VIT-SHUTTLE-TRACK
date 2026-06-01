@@ -1,7 +1,7 @@
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import { useEffect, useMemo, useState } from 'react';
-import { ROUTE_LABELS, routeColor } from '../lib/demoData';
+import { ROUTE_LABELS, routeColor, runningShuttles } from '../lib/demoData';
 
 function Recenter({ pos, zoom = 16 }) {
   const map = useMap();
@@ -59,10 +59,7 @@ export default function MapView({ shuttles = [], followSelf = true, onSelect }) 
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
 
-  const running = useMemo(
-    () => shuttles.filter((s) => s?.status === 'running' && Number(s.lat) && Number(s.lng)),
-    [shuttles]
-  );
+  const running = useMemo(() => runningShuttles(shuttles), [shuttles]);
 
   function pick(s) {
     setFocus([Number(s.lat), Number(s.lng)]);
