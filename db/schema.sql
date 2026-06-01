@@ -140,3 +140,47 @@ SET role = 'admin', reg_no = 'ADMIN';
 INSERT INTO public.wallets (user_id, balance)
 VALUES ('0cfdebc4-14de-45eb-b20a-9c2f66e2cdc7', 0)
 ON CONFLICT (user_id) DO NOTHING;
+
+-- 12. REFUND STORED PROCEDURE (admin reverses a fare charge)
+CREATE OR REPLACE FUNCTION public.sp_refund_transaction(
+  p_tx_id TEXT,
+  p_admin_id UUID DEFAULT NULL,
+  p_reason TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_tx public.transactions%ROWTYPE;
+  v_balance DECIMAL(12, 2);
+BEGIN
+  SELECT * INTO v_tx FROM public.transactions WHERE id = p_tx_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Transaction not found';
+  END IF;
+  IF v_tx.status = 'refunded' THEN
+    RAISE EXCEPTION 'Transaction already refunded';
+  END IF;
+
+  UPDATE public.transactions
+  SET
+    status = 'refunded',
+    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+      'refunded_at', NOW(),
+      'refunded_by', p_admin_id,
+      'refund_reason', p_reason
+    )
+  WHERE id = p_tx_id;
+
+  INSERT INTO public.wallets (user_id, balance)
+  VALUES (v_tx.user_id, COALESCE(v_tx.amount, 0))
+  ON CONFLICT (user_id) DO UPDATE
+  SET balance = public.wallets.balance + COALESCE(v_tx.amount, 0);
+
+  SELECT balance INTO v_balance FROM public.wallets WHERE user_id = v_tx.user_id;
+
+  RETURN jsonb_build_object('tx_id', p_tx_id, 'wallet_balance', v_balance);
+END;
+$$;

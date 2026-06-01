@@ -38,6 +38,13 @@ export default function Admin() {
   const [showAddMoneyForm, setShowAddMoneyForm] = useState(false);
   const [addMoneyInput, setAddMoneyInput] = useState('');
 
+  // Edit profile state (after search)
+  const [studentEdit, setStudentEdit] = useState(null);
+  const [driverEdit, setDriverEdit] = useState(null);
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
+  const [refundMsg, setRefundMsg] = useState('');
+
   async function startAdminNfcScan() {
     if (!('NDEFReader' in window)) {
       alert('Web NFC is not supported on this browser/device (requires Chrome on Android/Mobile).');
@@ -83,6 +90,53 @@ export default function Admin() {
     if (!dbState?.shuttles) return;
     setShuttles((dbState.shuttles || []).map(normalizeShuttle));
   }, [dbState]);
+
+  useEffect(() => {
+    const list = dbState?.users || [];
+    const student = reg.trim()
+      ? list.find((u) => u.role === 'student' && u.regNo.toLowerCase() === reg.trim().toLowerCase())
+      : null;
+    if (!student) {
+      setStudentEdit(null);
+      return;
+    }
+    setStudentEdit((prev) => {
+      if (prev?._userId === student.id) return prev;
+      return {
+        _userId: student.id,
+        name: student.name,
+        regNo: student.regNo,
+        cardUid: student.cardUid || '',
+        passoutYear: student.passoutYear || new Date().getFullYear() + 4,
+      };
+    });
+    setEditError('');
+    setEditSuccess('');
+  }, [reg, dbState?.users]);
+
+  useEffect(() => {
+    const list = dbState?.users || [];
+    const driver = driverReg.trim()
+      ? list.find((u) => u.role === 'driver' && u.regNo.toLowerCase() === driverReg.trim().toLowerCase())
+      : null;
+    if (!driver) {
+      setDriverEdit(null);
+      return;
+    }
+    const shuttle = (dbState?.shuttles || []).find((s) => s.driverId === driver.id);
+    setDriverEdit((prev) => {
+      if (prev?._userId === driver.id) return prev;
+      return {
+        _userId: driver.id,
+        name: driver.name,
+        regNo: driver.regNo,
+        vehicleNo: shuttle?.vehicleNo || '',
+        route: shuttle?.route || 'A',
+      };
+    });
+    setEditError('');
+    setEditSuccess('');
+  }, [driverReg, dbState?.users, dbState?.shuttles]);
 
   async function handleAddStudent(e) {
     e.preventDefault();
@@ -337,7 +391,8 @@ export default function Admin() {
   }
 
   async function handleRefund(row) {
-    if (!confirm(`Confirm refunding ${money(row.amount)} to user?`)) return;
+    if (!confirm(`Confirm refunding ${money(row.amount)} to the student's wallet?`)) return;
+    setRefundMsg('');
 
     try {
       const res = await fetch('/api/refund', {
@@ -345,15 +400,85 @@ export default function Admin() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: row.id,
-          admin_id: user?.id
-        })
+          admin_id: user?.id,
+          reason: 'admin_refund',
+        }),
       });
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok) {
+        setRefundMsg(`Refunded ${money(row.amount)} successfully.`);
         refresh();
+      } else {
+        setRefundMsg(data.error || 'Refund failed');
       }
     } catch (e) {
+      setRefundMsg('Refund failed: network error');
       console.error(e);
+    }
+  }
+
+  async function handleUpdateStudent(e) {
+    e.preventDefault();
+    setEditError('');
+    setEditSuccess('');
+    if (!selectedStudent || !studentEdit) return;
+
+    try {
+      const res = await fetch('/api/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_student',
+          userId: selectedStudent.id,
+          name: studentEdit.name,
+          regNo: studentEdit.regNo,
+          cardUid: studentEdit.cardUid,
+          passoutYear: studentEdit.passoutYear,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setEditSuccess('Student details saved.');
+        if (data.user?.regNo) setReg(data.user.regNo);
+        refresh();
+      } else {
+        setEditError(data.error || 'Failed to update student');
+      }
+    } catch (err) {
+      setEditError('Network connection failed');
+    }
+  }
+
+  async function handleUpdateDriver(e) {
+    e.preventDefault();
+    setEditError('');
+    setEditSuccess('');
+    if (!selectedDriver || !driverEdit) return;
+
+    try {
+      const res = await fetch('/api/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_driver',
+          userId: selectedDriver.id,
+          name: driverEdit.name,
+          regNo: driverEdit.regNo,
+          vehicleNo: driverEdit.vehicleNo,
+          route: driverEdit.route,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setEditSuccess('Driver details saved.');
+        if (data.user?.regNo) setDriverReg(data.user.regNo);
+        refresh();
+      } else {
+        setEditError(data.error || 'Failed to update driver');
+      }
+    } catch (err) {
+      setEditError('Network connection failed');
     }
   }
 
@@ -386,11 +511,17 @@ export default function Admin() {
   const students = allUsersList
     .filter(u => u.role === 'student' && (!reg || u.regNo.toLowerCase().includes(reg.toLowerCase())))
     .slice(0, 30);
-  const drivers = allUsersList.filter(u => u.role === 'driver');
+  const drivers = allUsersList
+    .filter(u => u.role === 'driver' && (!driverReg || u.regNo.toLowerCase().includes(driverReg.toLowerCase())))
+    .slice(0, 30);
   const tx = dbState?.transactions || [];
 
-  const selectedStudent = students.find(s => s.regNo.toLowerCase() === reg.toLowerCase());
-  const selectedDriver = drivers.find(d => d.regNo.toLowerCase() === driverReg.toLowerCase());
+  const selectedStudent = reg.trim()
+    ? allUsersList.find(u => u.role === 'student' && u.regNo.toLowerCase() === reg.trim().toLowerCase())
+    : null;
+  const selectedDriver = driverReg.trim()
+    ? allUsersList.find(u => u.role === 'driver' && u.regNo.toLowerCase() === driverReg.trim().toLowerCase())
+    : null;
 
   // Driver Profile Data Calculation
   const driverRides = tx.filter(t => t.driverId === selectedDriver?.id && t.status !== 'refunded');
@@ -586,9 +717,21 @@ export default function Admin() {
               <h3 style={{ fontSize: '15px', color: 'var(--ink)' }}>
                 {selectedStudent.name} (Wallet balance: {money(dbState?.wallets?.[selectedStudent.id] || 0)})
               </h3>
-              <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
-                Reg No: <strong>{selectedStudent.regNo}</strong> · Card UID: <strong>{selectedStudent.cardUid || 'Not Mapped'}</strong> · Passout: <strong>{selectedStudent.passoutYear}</strong>
-              </p>
+
+              {studentEdit ? (
+                <form onSubmit={handleUpdateStudent} style={{ marginTop: '12px', background: '#fafafa', padding: '12px', borderRadius: '8px', border: '1px solid var(--line)' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Edit student details</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <input value={studentEdit.name} onChange={(e) => setStudentEdit({ ...studentEdit, name: e.target.value })} placeholder="Full name" required style={{ border: '1px solid var(--line)' }} />
+                    <input value={studentEdit.regNo} onChange={(e) => setStudentEdit({ ...studentEdit, regNo: e.target.value })} placeholder="Reg No" required style={{ border: '1px solid var(--line)' }} />
+                    <input value={studentEdit.cardUid} onChange={(e) => setStudentEdit({ ...studentEdit, cardUid: e.target.value })} placeholder="NFC Card UID" style={{ border: '1px solid var(--line)' }} />
+                    <input type="number" value={studentEdit.passoutYear} onChange={(e) => setStudentEdit({ ...studentEdit, passoutYear: e.target.value })} placeholder="Passout year" style={{ border: '1px solid var(--line)' }} />
+                  </div>
+                  <button type="submit" style={{ background: 'var(--green)', marginTop: '8px', width: '100%' }}>Save student details</button>
+                </form>
+              ) : null}
+              {editError && tab === 'students' && <p style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{editError}</p>}
+              {editSuccess && tab === 'students' && <p style={{ color: 'var(--green)', fontSize: '12px', marginTop: '6px' }}>{editSuccess}</p>}
 
               {/* NFC Mapping Form */}
               {showNfcMapForm ? (
@@ -637,7 +780,8 @@ export default function Admin() {
               </div>
 
               {/* Student Transactions */}
-              <h4 style={{ margin: '15px 0 6px 0', fontSize: '13px' }}>Recent Rides</h4>
+              <h4 style={{ margin: '15px 0 6px 0', fontSize: '13px' }}>Recent Rides (refund)</h4>
+              {refundMsg && <p style={{ fontSize: '12px', color: refundMsg.includes('success') ? 'var(--green)' : '#ef4444', marginBottom: '6px' }}>{refundMsg}</p>}
               <div className="history rich" style={{ maxHeight: '180px', overflowY: 'auto' }}>
                 {studentTxList.length ? (
                   studentTxList.map((t) => (
@@ -682,6 +826,26 @@ export default function Admin() {
           {selectedDriver ? ( 
             <div style={{ marginTop: '15px' }}>
               <AdminDriverProfile driver={driverProfileData} />
+
+              {driverEdit ? (
+                <form onSubmit={handleUpdateDriver} style={{ marginTop: '12px', background: '#fafafa', padding: '12px', borderRadius: '8px', border: '1px solid var(--line)' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Edit driver & shuttle details</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <input value={driverEdit.name} onChange={(e) => setDriverEdit({ ...driverEdit, name: e.target.value })} placeholder="Driver name" required style={{ border: '1px solid var(--line)' }} />
+                    <input value={driverEdit.regNo} onChange={(e) => setDriverEdit({ ...driverEdit, regNo: e.target.value })} placeholder="Driver ID" required style={{ border: '1px solid var(--line)' }} />
+                    <input value={driverEdit.vehicleNo} onChange={(e) => setDriverEdit({ ...driverEdit, vehicleNo: e.target.value })} placeholder="Vehicle number" style={{ border: '1px solid var(--line)' }} />
+                    <select value={driverEdit.route} onChange={(e) => setDriverEdit({ ...driverEdit, route: e.target.value })} style={{ border: '1px solid var(--line)' }}>
+                      <option value="A">SJT / PRP Green Route</option>
+                      <option value="B">Mens Hostel Blue Route</option>
+                      <option value="C">Out of Campus Yellow Route</option>
+                    </select>
+                  </div>
+                  <button type="submit" style={{ background: 'var(--blue)', marginTop: '8px', width: '100%' }}>Save driver details</button>
+                </form>
+              ) : null}
+              {editError && tab === 'drivers' && <p style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{editError}</p>}
+              {editSuccess && tab === 'drivers' && <p style={{ color: 'var(--green)', fontSize: '12px', marginTop: '6px' }}>{editSuccess}</p>}
+
               <div className="bar-actions" style={{ marginTop: '15px' }}>
                 <button onClick={() => handleRevertPassword(selectedDriver.id, selectedDriver.regNo)} style={{ background: 'var(--blue)', width: '100%' }}>Revert Password</button>
                 <button className="danger" onClick={() => handleDeleteUser(selectedDriver.id, 'driver', selectedDriver.regNo)} style={{ background: 'var(--blue)', width: '100%' }}>Delete Driver</button>
@@ -715,19 +879,29 @@ export default function Admin() {
           <h2>All Shuttle System transactions</h2>
           <div className="history rich" style={{ maxHeight: '250px', overflowY: 'auto', marginTop: '10px' }}>
             {tx.length ? (
-              tx.map((t) => (
-                <div key={t.id} style={{ display: 'flex', justifyBetween: 'space-between', fontSize: '12px', borderBottom: '1px solid var(--line)', padding: '8px 0' }}>
+              tx.map((t) => {
+                const txUser = allUsersList.find((u) => u.id === t.userId);
+                return (
+                <div key={t.id} style={{ display: 'flex', justifyBetween: 'space-between', fontSize: '12px', borderBottom: '1px solid var(--line)', padding: '8px 0', alignItems: 'center' }}>
                   <div>
                     <span>{new Date(t.createdAt).toLocaleString()}</span>
                     <em style={{ display: 'block', color: 'var(--muted)', fontSize: '11px', fontStyle: 'normal' }}>
-                      User ID: {t.userId} · Vehicle: {t.vehicleNo} · Route: {t.route}
+                      {txUser ? `${txUser.name} (${txUser.regNo})` : `User: ${t.userId}`} · {t.vehicleNo} · Route {t.route}
                     </em>
                   </div>
-                  <strong style={{ color: t.status === 'refunded' ? 'var(--blue)' : 'var(--green)' }}>
-                    {t.status === 'refunded' ? '[Refunded] ' : ''}{money(t.amount)}
-                  </strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <strong style={{ color: t.status === 'refunded' ? 'var(--blue)' : 'var(--green)' }}>
+                      {t.status === 'refunded' ? '[Refunded] ' : ''}{money(t.amount)}
+                    </strong>
+                    {t.status !== 'refunded' && (
+                      <button onClick={() => handleRefund(t)} style={{ minHeight: '28px', background: 'var(--blue)', fontSize: '11px', padding: '0 8px' }}>
+                        Refund
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ))
+              );
+              })
             ) : (
               <p className="muted">No transactions registered.</p>
             )}

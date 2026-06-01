@@ -54,6 +54,12 @@ export default async function handler(req, res) {
       case 'map_nfc':
         return handleMapNfc(svc, payload, res);
 
+      case 'update_student':
+        return handleUpdateStudent(svc, payload, res);
+
+      case 'update_driver':
+        return handleUpdateDriver(svc, payload, res);
+
       case 'send_alert':
         return handleSendAlert(svc, payload, res);
 
@@ -264,6 +270,111 @@ async function handleMapNfc(svc, { userId, cardUid }, res) {
   const { error } = await svc.from('users').update({ card_uid: String(cardUid).trim() }).eq('id', userId);
   if (error) return res.status(400).json({ error: error.message });
   return res.json({ success: true });
+}
+
+async function handleUpdateStudent(svc, { userId, name, regNo, cardUid, passoutYear }, res) {
+  if (!userId || !name || !regNo) {
+    return res.status(400).json({ error: 'User ID, name, and registration number are required' });
+  }
+
+  const trimmedReg = String(regNo).trim();
+  const { data: profile, error: fetchErr } = await svc.from('users').select('*').eq('id', userId).single();
+  if (fetchErr || !profile) return res.status(404).json({ error: 'Student not found' });
+  if (profile.role !== 'student') return res.status(400).json({ error: 'User is not a student' });
+
+  const { data: regConflict } = await svc
+    .from('users')
+    .select('id')
+    .eq('reg_no', trimmedReg)
+    .neq('id', userId)
+    .maybeSingle();
+  if (regConflict) return res.status(400).json({ error: 'Registration number already in use' });
+
+  const uid = cardUid != null && String(cardUid).trim() ? String(cardUid).trim() : null;
+  if (uid) {
+    const { data: cardConflict } = await svc
+      .from('users')
+      .select('id')
+      .eq('card_uid', uid)
+      .neq('id', userId)
+      .maybeSingle();
+    if (cardConflict) return res.status(400).json({ error: 'NFC UID already assigned to another user' });
+  }
+
+  if (trimmedReg !== profile.reg_no) {
+    const { error: authErr } = await svc.auth.admin.updateUserById(userId, {
+      email: campusEmail(trimmedReg),
+    });
+    if (authErr) return res.status(400).json({ error: authErr.message });
+  }
+
+  const { data: updated, error } = await svc
+    .from('users')
+    .update({
+      name: String(name).trim(),
+      reg_no: trimmedReg,
+      card_uid: uid,
+      passout_year: Number(passoutYear) || null,
+    })
+    .eq('id', userId)
+    .select('*')
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+
+  return res.json({ success: true, user: normalizeUser(updated) });
+}
+
+async function handleUpdateDriver(svc, { userId, name, regNo, vehicleNo, route }, res) {
+  if (!userId || !name || !regNo) {
+    return res.status(400).json({ error: 'User ID, name, and driver ID are required' });
+  }
+
+  const trimmedReg = String(regNo).trim();
+  const { data: profile, error: fetchErr } = await svc.from('users').select('*').eq('id', userId).single();
+  if (fetchErr || !profile) return res.status(404).json({ error: 'Driver not found' });
+  if (profile.role !== 'driver') return res.status(400).json({ error: 'User is not a driver' });
+
+  const { data: regConflict } = await svc
+    .from('users')
+    .select('id')
+    .eq('reg_no', trimmedReg)
+    .neq('id', userId)
+    .maybeSingle();
+  if (regConflict) return res.status(400).json({ error: 'Driver ID already in use' });
+
+  if (trimmedReg !== profile.reg_no) {
+    const { error: authErr } = await svc.auth.admin.updateUserById(userId, {
+      email: campusEmail(trimmedReg),
+    });
+    if (authErr) return res.status(400).json({ error: authErr.message });
+  }
+
+  const { data: updated, error } = await svc
+    .from('users')
+    .update({
+      name: String(name).trim(),
+      reg_no: trimmedReg,
+      card_uid: trimmedReg,
+    })
+    .eq('id', userId)
+    .select('*')
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+
+  if (vehicleNo) {
+    const { data: shuttle } = await svc.from('shuttles').select('id').eq('driver_id', userId).maybeSingle();
+    const shuttlePatch = {
+      vehicle_no: String(vehicleNo).trim(),
+      ...(route ? { route } : {}),
+    };
+    if (shuttle) {
+      await svc.from('shuttles').update(shuttlePatch).eq('id', shuttle.id);
+    }
+  } else if (route) {
+    await svc.from('shuttles').update({ route }).eq('driver_id', userId);
+  }
+
+  return res.json({ success: true, user: normalizeUser(updated) });
 }
 
 async function handleSendAlert(svc, { text, audience, expiresAt }, res) {
