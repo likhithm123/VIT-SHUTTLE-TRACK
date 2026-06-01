@@ -1,86 +1,221 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import WalletCard from '../components/WalletCard';
-import { activeAlerts, loadState, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor } from '../lib/demoData';
-import { supabase } from '../lib/supabaseClient';
+import { activeAlerts, logout, money, normalizeShuttle, normalizeTx, ROUTE_LABELS, routeColor } from '../lib/demoData';
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false });
 
 export default function Student() {
   const [user, setUser] = useState(null);
-  const [state, setState] = useState(null);
+  const [dbState, setDbState] = useState(null);
   const [shuttles, setShuttles] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [last, setLast] = useState('');
+  const [lastUpdated, setLastUpdated] = useState('');
+  const [hotlistSecs, setHotlistSecs] = useState(0);
 
   useEffect(() => {
     const u = JSON.parse(localStorage.getItem('cs_user') || 'null');
-    if (!u || u.role !== 'student') { location.href = '/'; return; }
-    setUser(u); refresh();
-    const timer = setInterval(refresh, 5000);
-    let channel;
-    if (supabase) channel = supabase.channel('campus-shuttles')
-      .on('broadcast', { event: 'location-update' }, ({ payload }) => setShuttles((list) => upsert(list, payload)))
-      .subscribe();
-    return () => { clearInterval(timer); if (channel) supabase.removeChannel(channel); };
+    if (!u || u.role !== 'student') {
+      location.href = '/';
+      return;
+    }
+    setUser(u);
+    
+    // Initial fetch
+    refresh(u.id);
+
+    // Refresh every 1 second for better real-time synchronization
+    const timer = setInterval(() => refresh(u.id), 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  async function refresh() {
-    const local = loadState();
-    let nextShuttles = (local.shuttles || []).map(normalizeShuttle);
-    let nextTx = (local.transactions || []).map(normalizeTx);
-    if (supabase) {
-      const [{ data: s }, { data: t }, { data: alerts }] = await Promise.all([
-        supabase.from('shuttles').select('*').order('last_seen', { ascending: false }),
-        supabase.from('transactions').select('*, shuttles(vehicle_number, route)').order('created_at', { ascending: false }).limit(100),
-        supabase.from('alerts').select('*').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
-      ]);
-      if (s) nextShuttles = s.map(normalizeShuttle);
-      if (t) nextTx = t.map((x) => normalizeTx({ ...x, vehicleNo: x.shuttles?.vehicle_number, route: x.shuttles?.route }));
-      if (alerts) local.alerts = alerts.map((a) => ({ id: a.id, text: a.text, audience: a.audience, expiresAt: a.expires_at, createdAt: a.created_at }));
+  async function refresh(currentUserId) {
+    const uid = currentUserId || user?.id;
+    if (!uid) return;
+
+    try {
+      const res = await fetch('/api/state');
+      if (res.ok) {
+        const state = await res.json();
+        setDbState(state);
+
+        // Find updated user information (for live balance updates)
+        const updatedUser = state.users.find(u => u.id === uid);
+        if (updatedUser) {
+          setUser(updatedUser);
+        }
+
+        // Normalize shuttles and transactions
+        const nextShuttles = (state.shuttles || []).map(normalizeShuttle);
+        setShuttles(nextShuttles);
+        setLastUpdated(new Date().toLocaleTimeString());
+
+        // Check if own card is hotlisted
+        const me = state.users?.find(u => u.id === uid);
+        if (me && me.cardUid && state.hotlist) {
+          const hotlistExpiry = state.hotlist[me.cardUid];
+          const secsLeft = hotlistExpiry ? Math.max(0, Math.ceil((hotlistExpiry - Date.now()) / 1000)) : 0;
+          setHotlistSecs(secsLeft);
+        } else {
+          setHotlistSecs(0);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to sync student data:', e);
     }
-    setState({ ...local, transactions: nextTx });
-    setShuttles(nextShuttles);
-    setLast(new Date().toLocaleTimeString());
   }
 
-  function upsert(list, p) {
-    const item = normalizeShuttle({ id: p.shuttle_id, vehicle_number: p.vehicle_no, route: p.route, status: p.status, current_lat: p.lat, current_lng: p.lng, last_seen: new Date().toISOString() });
-    return list.some((s) => s.id === item.id) ? list.map((s) => s.id === item.id ? item : s) : [...list, item];
-  }
+  // Filter transactions (rides) for current user
+  const transactions = (dbState?.transactions || [])
+    .map(normalizeTx)
+    .filter((t) => t.userId === user?.id);
 
-  const tx = (state?.transactions || []).filter((t) => t.userId === user?.id);
-  const total = tx.filter((t) => t.status !== 'refunded').reduce((a, t) => a + t.amount, 0);
-  const alerts = activeAlerts(state).filter((a) => !a.audience || ['all', 'student'].includes(a.audience));
+  // Filter ledger (add/withdraw) for current user
+  const ledgerEntries = (dbState?.ledger || []).filter((l) => l.userId === user?.id);
+
+  // Unified history: merge rides + ledger, sort newest first
+  // Optimization: Pre-filter and limit history to the most recent 100 entries for mobile performance
+  const rawHistory = [
+    ...transactions.map(t => ({ ...t, _kind: t.status === 'refunded' ? 'refund' : 'ride' })),
+    ...ledgerEntries.map(l => ({ ...l, _kind: l.type === 'credit' ? 'credit' : 'debit' }))
+  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 100);
+  
+  const unifiedHistory = rawHistory;
+
+  // Stats
+  const totalSpent = transactions
+    .filter((t) => t.status !== 'refunded')
+    .reduce((sum, t) => sum + t.amount, 0);
+  const totalCredited = ledgerEntries
+    .filter(l => l.type === 'credit')
+    .reduce((sum, l) => sum + l.amount, 0);
+  const todayRides = transactions.filter(t =>
+    new Date(t.createdAt).toDateString() === new Date().toDateString() && t.status !== 'refunded'
+  ).length;
+
+  // Filter active alerts for student audience
+  const alerts = activeAlerts(dbState)
+    .filter((a) => !a.audience || ['all', 'student'].includes(a.audience));
 
   return (
     <div className="app-shell vit">
-      <header className="topbar">
-        <div><p>VIT Vellore Shuttle</p><h1>{user?.name}</h1></div>
-        <div className="bar-actions"><button onClick={refresh}>Refresh</button><span>Last updated at {last || '-'}</span><button onClick={logout}>Logout</button></div>
+      <header className="topbar" style={{ borderLeft: '5px solid var(--green)' }}>
+        <div>
+          <p style={{ color: 'var(--muted)', fontWeight: 'bold' }}>VIT Vellore Shuttle Track</p>
+          <h1 style={{ color: 'var(--ink)', fontWeight: '800' }}>{user?.name}</h1>
+        </div>
+        <div className="bar-actions">
+          <button onClick={() => refresh()} style={{ background: 'var(--blue)' }}>Sync Now</button>
+          <span>Last sync: {lastUpdated || '-'}</span>
+          <button onClick={logout} style={{ background: 'var(--ink)' }}>Logout</button>
+        </div>
       </header>
+
       <main className="dashboard">
-        <section className="panel map-panel">
-          <div className="section-head"><div><p>Mobile GPS + live shuttles</p><h2>Campus map</h2></div><span className="live-dot">auto 5s</span></div>
+        {/* Map View */}
+        <section className="panel map-panel" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '12px' }}>
+          <div className="section-head">
+            <div>
+              <p style={{ color: 'var(--muted)', fontSize: '12px' }}>Mobile GPS + Live Shuttles</p>
+              <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>Campus Live Map</h2>
+            </div>
+            <span className="live-dot" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd' }}>Live Sync</span>
+          </div>
+          {/* Hotlist banner */}
+          {hotlistSecs > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '8px 14px', margin: '8px 12px' }}>
+              <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#f59e0b', color: 'white', display: 'grid', placeItems: 'center', fontWeight: 'bold', fontSize: '15px', flexShrink: 0 }}>
+                {hotlistSecs}
+              </div>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#92400e' }}>Card cooldown — {hotlistSecs}s remaining</div>
+                <div style={{ fontSize: '11px', color: '#b45309' }}>Your card was just charged. Do not tap again until timer ends.</div>
+              </div>
+            </div>
+          )}
           <MapView shuttles={shuttles} onSelect={setSelected} showRoutes={false} />
         </section>
+
+        {/* Side Controls & Wallet & Stats */}
         <section className="side-stack">
-          {user && <WalletCard user={user} onRefresh={refresh} />}
-          <div className="panel">
-            <div className="section-head"><h2>My spend</h2><b>{user?.regNo}</b></div>
-            <p className="metric">Total spent: <b>{money(total)}</b></p>
+          {user && dbState && (
+            <WalletCard user={user} dbState={dbState} onRefresh={() => refresh()} />
+          )}
+
+          {/* Stats Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'bold' }}>TOTAL SPENT</div>
+              <div style={{ fontSize: '18px', fontWeight: '800', color: '#166534' }}>{money(totalSpent)}</div>
+            </div>
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'bold' }}>WALLET ADDED</div>
+              <div style={{ fontSize: '18px', fontWeight: '800', color: '#1d4ed8' }}>{money(totalCredited)}</div>
+            </div>
+            <div style={{ background: '#fefce8', border: '1px solid #fef08a', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'bold' }}>TODAY RIDES</div>
+              <div style={{ fontSize: '18px', fontWeight: '800', color: '#854d0e' }}>{todayRides}</div>
+            </div>
           </div>
-          <div className="panel notify"><h2>Notifications</h2>{alerts.length ? alerts.map((a) => <p className="notice" key={a.id}>{a.text}<small>Until {new Date(a.expiresAt).toLocaleString()}</small></p>) : <p className="muted">No active alerts.</p>}</div>
-          <div className="panel">
-            <h2>{selected ? selected.vehicleNo : 'Selected shuttle'}</h2>
-            {selected ? <p className="alert"><b style={{ color: routeColor(selected.route) }}>{ROUTE_LABELS[selected.route]}</b><br />{selected.status} · {selected.lastSeen ? new Date(selected.lastSeen).toLocaleTimeString() : 'live'}</p> : <p className="muted">Click a shuttle marker or left list.</p>}
+
+          {/* Alerts / Notifications */}
+          <div className="panel notify" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '10px' }}>
+            <h2 style={{ color: 'var(--ink)', fontWeight: '700', marginBottom: '10px' }}>Broadcast Notifications</h2>
+            {alerts.length ? (
+              alerts.map((a) => (
+                <div className="notice" key={a.id}>
+                  <strong>{a.text}</strong>
+                  <small>Valid until {new Date(a.expiresAt).toLocaleString()}</small>
+                </div>
+              ))
+            ) : (
+              <p className="muted">No active announcements.</p>
+            )}
           </div>
-          <div className="panel">
-            <div className="section-head"><h2>Transactions</h2><b>{user?.regNo}</b></div>
-            <div className="history rich">
-              {tx.length ? tx.map((t) => <div key={t.id} onClick={() => setSelected(shuttles.find((s) => s.id === t.shuttleId) || null)}>
-                <span>{new Date(t.createdAt).toLocaleString()}</span><b>{money(t.amount)}</b><em>{t.vehicleNo || 'Vehicle'} · {ROUTE_LABELS[t.route] || t.route || 'Route'} · {t.status}</em>
-              </div>) : <p className="muted">No transactions found.</p>}
+
+          {/* Selected Shuttle Detail */}
+          <div className="panel" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '10px' }}>
+            <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>{selected ? selected.vehicleNo : 'Selected Shuttle Info'}</h2>
+            {selected ? (
+              <div className="alert" style={{ background: '#f0fdf4', borderColor: '#bbf7d0', color: '#166534', marginTop: '10px' }}>
+                <b style={{ color: routeColor(selected.route), fontSize: '15px' }}>
+                  {ROUTE_LABELS[selected.route] || `Route ${selected.route}`}
+                </b>
+                <div style={{ marginTop: '5px', fontSize: '13px' }}>
+                  Status: <strong>{selected.status}</strong> · {selected.lastSeen ? `Seen at ${new Date(selected.lastSeen).toLocaleTimeString()}` : 'Live'}
+                </div>
+              </div>
+            ) : (
+              <p className="muted" style={{ marginTop: '10px' }}>Click a shuttle arrow on the map to see route info.</p>
+            )}
+          </div>
+
+          {/* Unified Transaction Ledger */}
+          <div className="panel" style={{ border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: '10px' }}>
+            <div className="section-head">
+              <h2 style={{ color: 'var(--ink)', fontWeight: '700' }}>Full Transaction History</h2>
+              <b style={{ color: 'var(--muted)', fontSize: '12px' }}>{unifiedHistory.length} entries</b>
+            </div>
+            <div className="txn-history" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {unifiedHistory.length ? unifiedHistory.map((entry, i) => (
+                <div 
+                  key={entry.id || i} 
+                  className={`txn-row ${entry._kind === 'credit' || entry._kind === 'refund' ? 'add' : 'withdraw'}`}
+                  onClick={() => entry._kind === 'ride' && setSelected(shuttles.find(s => s.id === entry.shuttleId) || null)}
+                >
+                  <div className="txn-main">
+                    <div className="txn-desc">
+                      <b>{entry._kind === 'ride' ? `Ride: ${entry.vehicleNo}` : entry.note || (entry._kind === 'credit' ? 'Wallet Deposit' : 'Ride Payment')}</b>
+                      {entry._kind === 'ride' && <small>{ROUTE_LABELS[entry.route] || entry.route}</small>}
+                    </div>
+                    <span className="txn-time">{new Date(entry.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  </div>
+                  <div className="txn-val">
+                    <span className="txn-amount">{entry._kind === 'credit' || entry._kind === 'refund' ? '+' : '-'}{money(entry.amount)}</span>
+                    <small className="txn-kind">{entry._kind}</small>
+                  </div>
+                </div>
+              )) : <p className="muted">No transaction history yet.</p>}
             </div>
           </div>
         </section>

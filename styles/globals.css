@@ -1,14 +1,15 @@
 :root {
-  --bg: #f6f7f3;
-  --ink: #17201b;
-  --muted: #69746e;
-  --line: #dfe5dc;
+  --bg: #f0fdf4; /* Very light green tint for bg */
+  --ink: #064e3b; /* Deep green for text */
+  --muted: #047857; /* Medium forest green for muted text */
+  --line: #bbf7d0; /* Light green border line */
   --panel: #ffffff;
-  --green: #2f8f5b;
-  --lime: #84cc16;
-  --blue: #2563eb;
-  --red: #d92d20;
-  --shadow: 0 18px 48px rgba(30, 41, 59, .12);
+  --green: #32cd32; /* Pure Green */
+  --lime: #32cd32;
+  --blue: #1e90ff; /* Pure Blue */
+  --yellow: #ffcc00; /* Route 3 Yellow */
+  --red: #1e90ff; /* Error is styled as blue to respect blue/green constraint */
+  --shadow: 0 12px 36px rgba(6, 78, 59, 0.08);
 }
 
 * { box-sizing: border-box; }
@@ -33,7 +34,7 @@ button {
   background: var(--ink);
   cursor: pointer;
 }
-button.danger { background: #b42318; }
+button.danger { background: var(--blue); }
 input, select {
   width: 100%;
   min-height: 42px;
@@ -171,8 +172,47 @@ h2 { font-size: 18px; }
 .pin.route-B { background: var(--lime); color: #14210a; }
 .pin.route-A { background: var(--green); }
 .pin.route-B { background: var(--blue); }
+.pin.route-C { background: var(--yellow); color: black; }
 
 .wallet { display: grid; grid-template-columns: repeat(4, auto); align-items: center; gap: 10px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.9); box-shadow: 0 10px 30px rgba(30, 41, 59, .07); }
+.txn-history { display: grid; gap: 10px; margin-top: 12px; }
+.txn-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 12px; transition: transform 0.1s; cursor: pointer; }
+.txn-row:active { transform: scale(0.98); }
+.txn-row:hover { background: #f8fafc; border-color: var(--muted); }
+.txn-row.add { border-left: 4px solid var(--green); }
+.txn-row.withdraw { border-left: 4px solid var(--blue); }
+.txn-main { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.txn-desc { display: flex; flex-direction: column; }
+.txn-desc b { font-size: 14px; color: var(--ink); line-height: 1.2; }
+.txn-desc small { font-size: 11px; color: var(--muted); font-weight: 600; }
+.txn-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.txn-val { text-align: right; display: flex; flex-direction: column; justify-content: center; }
+.txn-amount { font-weight: 800; font-size: 16px; }
+.txn-kind { font-size: 9px; font-weight: 900; opacity: 0.5; text-transform: uppercase; margin-top: 2px; }
+
+.tap-popup-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(6px); background: rgba(0,0,0,0.25); pointer-events: none; }
+.tap-popup-overlay.ok .popup-card { background: var(--green); }
+.tap-popup-overlay.fail .popup-card { background: var(--blue); animation: tapPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), shake 0.35s 0.2s ease; }
+.popup-card {
+  width: 85%;
+  max-width: 300px;
+  padding: 40px 20px;
+  border-radius: 32px;
+  text-align: center;
+  color: white;
+  border: 6px solid white;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.4);
+  animation: tapPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.popup-icon { font-size: 80px; line-height: 1; margin-bottom: 16px; }
+.popup-msg { font-size: 36px; font-weight: 900; letter-spacing: -1px; margin-bottom: 8px; }
+.popup-sub { font-size: 14px; font-weight: 500; opacity: 0.9; line-height: 1.4; }
+
+@keyframes tapPop {
+  0% { transform: scale(0.4); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 .wallet div { display: grid; gap: 2px; padding: 8px 12px; border-radius: 8px; background: #f3f7f2; }
 .wallet span, .wallet small { color: var(--muted); font-size: 12px; }
 .wallet button { background: var(--green); }
@@ -191,12 +231,14 @@ h2 { font-size: 18px; }
 .history span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .history em { font-style: normal; color: var(--green); }
 .history.rich div { grid-template-columns: 1fr auto; cursor: pointer; }
+.history.rich div:hover { background: #f0fdf4; border-color: var(--green); }
 .history.rich em { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
-.alert { padding: 12px; background: #fff8e5; border: 1px solid #f2df9b; border-radius: 8px; }
+.history.rich em.completed { color: var(--green); font-weight: 700; }
+.alert { padding: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; color: #166534; }
 .metric { margin-top: 10px; color: var(--muted); }
 .notify { display: grid; gap: 10px; }
-.notice { padding: 12px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; color: #9f1239; }
-.notice small { display: block; margin-top: 6px; color: #be123c; }
+.notice { padding: 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; color: #0369a1; }
+.notice small { display: block; margin-top: 6px; color: #0284c7; }
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: end; }
 .form-grid h2 { grid-column: 1 / -1; }
 .inline-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; width: min(100%, 360px); }
@@ -218,6 +260,15 @@ h2 { font-size: 18px; }
 .admin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 18px; }
 .stat b { display: block; margin: 8px 0; font-size: 30px; }
 .wide { grid-column: span 2; }
+
+.driver-search-result { grid-column: 1 / -1; background: white; padding: 24px; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.driver-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed var(--line); }
+.v-tag { background: var(--ink); color: white; padding: 6px 12px; border-radius: 6px; font-family: monospace; font-size: 14px; }
+.earnings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.earn-card { padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--line); }
+.earn-card label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+.earn-card span { font-size: 24px; font-weight: 900; color: var(--ink); }
+
 .map-wide { grid-column: span 3; }
 .tabs-panel { grid-column: span 1; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }

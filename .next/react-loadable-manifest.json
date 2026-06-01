@@ -1,4 +1,10 @@
 {
+  "admin.js -> ../components/MapView": {
+    "id": "admin.js -> ../components/MapView",
+    "files": [
+      "static/chunks/components_MapView_jsx.js"
+    ]
+  },
   "driver.js -> ../components/MapView": {
     "id": "driver.js -> ../components/MapView",
     "files": [

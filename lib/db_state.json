@@ -1,0 +1,346 @@
+{
+  "users": [
+    {
+      "id": "adm-001",
+      "role": "admin",
+      "name": "Campus Admin",
+      "regNo": "ADMIN",
+      "password": "admin@123",
+      "needsPasswordReset": false
+    },
+    {
+      "id": "drv-1780242928335",
+      "role": "driver",
+      "name": "D1",
+      "regNo": "D1",
+      "cardUid": "D1",
+      "password": "12345",
+      "needsPasswordReset": false
+    },
+    {
+      "id": "stu-1780242937459",
+      "role": "student",
+      "name": "A1",
+      "regNo": "A1",
+      "cardUid": "da:1e:7c:dc",
+      "passoutYear": 2030,
+      "password": "12345",
+      "needsPasswordReset": false
+    },
+    {
+      "id": "stu-1780243838739",
+      "role": "student",
+      "name": "A2",
+      "regNo": "A2",
+      "cardUid": "12",
+      "passoutYear": 2030,
+      "password": "A2@123",
+      "needsPasswordReset": true
+    },
+    {
+      "id": "drv-1780244226755",
+      "role": "driver",
+      "name": "D2",
+      "regNo": "D2",
+      "cardUid": "D2",
+      "password": "12345",
+      "needsPasswordReset": false
+    }
+  ],
+  "wallets": {
+    "drv-1780242928335": 0,
+    "stu-1780242937459": 955,
+    "stu-1780243838739": 0,
+    "drv-1780244226755": 0
+  },
+  "dues": {
+    "stu-1780243838739": {
+      "amount": 150,
+      "since": "2026-05-31T16:11:58.351Z"
+    }
+  },
+  "shuttles": [
+    {
+      "id": "bus-1780242928335",
+      "vehicleNo": "TN23AA004",
+      "driverId": "drv-1780242928335",
+      "route": "C",
+      "status": "running",
+      "lat": 12.966965566543461,
+      "lng": 79.15401576344395,
+      "heading": 163.37104107115033,
+      "lastSeen": "2026-05-31T17:19:54.506Z"
+    },
+    {
+      "id": "bus-1780244226755",
+      "vehicleNo": "TN23AA003",
+      "driverId": "drv-1780244226755",
+      "route": "A",
+      "status": "running",
+      "lat": 13.1471478,
+      "lng": 79.096091,
+      "heading": 89.99999371335264,
+      "lastSeen": "2026-05-31T16:50:54.352Z"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "TX1780245322267",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:35:22.267Z"
+    },
+    {
+      "id": "TX1780245310252",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:35:10.252Z"
+    },
+    {
+      "id": "TX1780245298454",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:34:58.454Z"
+    },
+    {
+      "id": "TX1780244859291",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:27:39.291Z"
+    },
+    {
+      "id": "TX1780244840591",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:27:20.591Z"
+    },
+    {
+      "id": "TX1780244826315",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:27:06.315Z"
+    },
+    {
+      "id": "TX1780244809883",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:26:49.884Z"
+    },
+    {
+      "id": "TX1780244799460",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:26:39.460Z"
+    },
+    {
+      "id": "TX1780244781727",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:26:21.727Z"
+    },
+    {
+      "id": "TX1780244769057",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA004",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:26:09.057Z"
+    },
+    {
+      "id": "TX1780243944306",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA003",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:12:24.306Z"
+    },
+    {
+      "id": "TX1780243928863",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA003",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:12:08.863Z"
+    },
+    {
+      "id": "TX1780243918351",
+      "userId": "stu-1780243838739",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA003",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:11:58.351Z"
+    },
+    {
+      "id": "TX1780243492139",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "B",
+      "vehicleNo": "TN23AA001",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:04:52.139Z"
+    },
+    {
+      "id": "TX1780243201353",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA001",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T16:00:01.353Z"
+    },
+    {
+      "id": "TX1780243189077",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA001",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T15:59:49.077Z"
+    },
+    {
+      "id": "TX1780243173412",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA001",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T15:59:33.412Z"
+    },
+    {
+      "id": "TX1780243159078",
+      "userId": "stu-1780242937459",
+      "driverId": "drv-1780242928335",
+      "shuttleId": "bus-1780242928335",
+      "route": "A",
+      "vehicleNo": "TN23AA001",
+      "amount": 15,
+      "status": "success",
+      "cardUid": "da:1e:7c:dc",
+      "createdAt": "2026-05-31T15:59:19.078Z"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "AL-1780245032920",
+      "text": "Hi",
+      "audience": "all",
+      "expiresAt": "2026-06-01T16:30:00.000Z",
+      "createdAt": "2026-05-31T16:30:32.927Z"
+    }
+  ],
+  "cards": {
+    "12": "stu-1780243838739",
+    "da:1e:7c:dc": "stu-1780242937459"
+  },
+  "hotlist": {
+    "da:1e:7c:dc": 1780245332267
+  },
+  "ledger": [
+    {
+      "id": "LED-1780245357708",
+      "userId": "stu-1780242937459",
+      "type": "credit",
+      "amount": 1000,
+      "note": "Wallet top-up by Admin",
+      "createdAt": "2026-05-31T16:35:57.708Z"
+    },
+    {
+      "id": "LED-1780245106888",
+      "userId": "stu-1780242937459",
+      "type": "debit",
+      "amount": 75,
+      "note": "Wallet withdrawal by Admin",
+      "createdAt": "2026-05-31T16:31:46.888Z"
+    },
+    {
+      "id": "LED-1780243631542",
+      "userId": "stu-1780242937459",
+      "type": "credit",
+      "amount": 100,
+      "note": "Wallet top-up by Admin",
+      "createdAt": "2026-05-31T16:07:11.542Z"
+    }
+  ]
+}
