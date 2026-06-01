@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{\"..\\\\lib\\\\demoData.js -> ./authSession\":{\"id\":\"..\\\\lib\\\\demoData.js -> ./authSession\",\"files\":[]},\"admin.js -> ../components/MapView\":{\"id\":\"admin.js -> ../components/MapView\",\"files\":[\"static/chunks/components_MapView_jsx.js\"]}}"
+self.__REACT_LOADABLE_MANIFEST="{}"

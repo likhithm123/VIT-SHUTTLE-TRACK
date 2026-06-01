@@ -13,6 +13,17 @@ import {
   runningShuttles,
 } from '../lib/demoData';
 import { clearAuthSession } from '../lib/authSession';
+import { lookupCard, persistCardCache } from '../lib/driverCardCache';
+import {
+  enqueueTap,
+  isLocallyHotlisted,
+  isOnline,
+  localHotlistSecondsLeft,
+  pendingCount,
+  postTapToServer,
+  setLocalHotlist,
+  syncPendingTaps,
+} from '../lib/offlineTapQueue';
 import { useAppState } from '../lib/useAppState';
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false });
@@ -33,6 +44,8 @@ export default function Driver() {
   const [hotlistCountdown, setHotlistCountdown] = useState(0); // seconds remaining for last-tapped card
   const [wakeLock, setWakeLock] = useState(null); // For Wake Lock API
   const [showPopup, setShowPopup] = useState(false);
+  const [offlinePending, setOfflinePending] = useState(0);
+  const [syncStatus, setSyncStatus] = useState('');
   
   // Interactive vehicle number input
   const [vehicleNoInput, setVehicleNoInput] = useState('');
@@ -90,7 +103,76 @@ export default function Driver() {
         .map(normalizeTx)
         .filter((t) => t.driverId === u.id)
     );
+
+    persistCardCache(dbState);
   }, [dbState, user]);
+
+  useEffect(() => {
+    setOfflinePending(pendingCount());
+  }, []);
+
+  useEffect(() => {
+    async function runSync() {
+      if (!isOnline() || pendingCount() === 0) return;
+      setSyncStatus('Syncing offline taps…');
+      const result = await syncPendingTaps();
+      setOfflinePending(pendingCount());
+      if (result.synced > 0) {
+        setSyncStatus(`Synced ${result.synced} tap(s) to server.`);
+        refresh();
+      } else if (result.remaining > 0) {
+        setSyncStatus(`${result.remaining} tap(s) still waiting to sync.`);
+      } else {
+        setSyncStatus('');
+      }
+    }
+
+    runSync();
+    window.addEventListener('online', runSync);
+    const interval = setInterval(() => {
+      if (isOnline() && pendingCount() > 0) runSync();
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('online', runSync);
+      clearInterval(interval);
+    };
+  }, [refresh]);
+
+  function resolveCardFromCache(cardUid) {
+    const hit = lookupCard(cardUid);
+    if (hit) return { name: hit.name, regNo: hit.regNo, id: hit.userId };
+    const userId = dbState?.cards?.[cardUid];
+    if (!userId) {
+      return (dbState?.users || []).find((u) => u.cardUid === cardUid) || null;
+    }
+    return (dbState?.users || []).find((u) => u.id === userId) || null;
+  }
+
+  function recordTapHistory(cardUid, name, regNo, timeLabel, amount, offline = false) {
+    setTapHistory((prev) => [
+      {
+        uid: cardUid,
+        name: name || 'Unknown card',
+        regNo: regNo || cardUid,
+        time: timeLabel,
+        amount,
+        offline,
+      },
+      ...prev,
+    ].slice(0, 20));
+    setHotlistCountdown(10);
+    if (refs.current.hotlistTimer) clearInterval(refs.current.hotlistTimer);
+    refs.current.hotlistTimer = setInterval(() => {
+      setHotlistCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(refs.current.hotlistTimer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
 
   async function stopShuttleOnLogout() {
     const bus = refs.current.shuttle;
@@ -297,61 +379,140 @@ export default function Driver() {
     } catch(e) {}
   }
 
-  async function processTap(cardUid = 'CARD1001') {
-    if (!shuttle) return;
-    setTap({ state: 'scan', text: `Verifying card UID: ${cardUid}` });
-    
-    try {
-      const res = await fetch('/api/process-tap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          card_uid: cardUid,
-          driver_id: user.id,
-          shuttle_id: shuttle.id,
-          route: route,
-          vehicle_no: shuttle.vehicleNo
-        })
-      });
-      
-      setShowPopup(true);
+  function instantTapSuccess(cardUid, student, offline = false) {
+    const tapTime = new Date().toLocaleTimeString();
+    setLocalHotlist(cardUid);
+    setTap({ state: 'ok', text: `✅ ${student.name} · valid` });
+    beep(true);
+    setShowPopup(true);
+    recordTapHistory(cardUid, student.name, student.regNo, tapTime, 15, offline);
+    dismissTapPopup(1200);
+  }
 
-      const data = await res.json();
-      if (res.ok) {
-        const tapTime = new Date(data.tapTime || Date.now()).toLocaleTimeString();
-        setTap({ state: 'ok', text: `✅ ${data.userName} charged ${money(15)} at ${tapTime}` });
-        beep(true);
-        // Add to tap history with timestamp
-        setTapHistory(prev => [{
-          uid: cardUid,
-          name: data.userName,
-          regNo: data.userRegNo,
-          time: tapTime,
-          amount: 15
-        }, ...prev].slice(0, 20));
-        // Start 10s hotlist countdown
-        setHotlistCountdown(10);
-        if (refs.current.hotlistTimer) clearInterval(refs.current.hotlistTimer);
-        refs.current.hotlistTimer = setInterval(() => {
-          setHotlistCountdown(prev => {
-            if (prev <= 1) { clearInterval(refs.current.hotlistTimer); return 0; }
-            return prev - 1;
-          });
-        }, 1000);
-        refresh();
-      } else {
-        setTap({ state: 'fail', text: data.error || 'Tap rejected' });
-        beep(false);
-      }
-    } catch (e) {
-      setTap({ state: 'fail', text: 'Network connection failed' });
-      beep(false);
+  function instantTapFail(message) {
+    setTap({ state: 'fail', text: message });
+    beep(false);
+    setShowPopup(true);
+    dismissTapPopup(2000);
+  }
+
+  function chargeTapInBackground(tapPayload, cardUid, student) {
+    postTapToServer(tapPayload)
+      .then((result) => {
+        if (result.ok) {
+          refresh();
+          if (pendingCount() > 0) {
+            syncPendingTaps().then((sync) => {
+              setOfflinePending(pendingCount());
+              if (sync.synced > 0) setSyncStatus(`Synced ${sync.synced} queued tap(s).`);
+            });
+          }
+          return;
+        }
+        if (result.status === 404 || result.status === 409) {
+          setTap({ state: 'fail', text: result.error || 'Tap rejected' });
+          setSyncStatus(`⚠ ${result.error || 'Server rejected tap'}`);
+          beep(false);
+          return;
+        }
+        enqueueTap({
+          ...tapPayload,
+          userName: student?.name,
+          userRegNo: student?.regNo,
+        });
+        setOfflinePending(pendingCount());
+        setSyncStatus('Charge queued — will retry when server responds.');
+      })
+      .catch(() => {
+        enqueueTap({
+          ...tapPayload,
+          userName: student?.name,
+          userRegNo: student?.regNo,
+        });
+        setOfflinePending(pendingCount());
+      });
+  }
+
+  async function processTap(cardUid = 'CARD1001') {
+    if (!shuttle || !user) return;
+    if (refs.current.tapLock === cardUid) return;
+    refs.current.tapLock = cardUid;
+    setTimeout(() => {
+      if (refs.current.tapLock === cardUid) refs.current.tapLock = null;
+    }, 400);
+
+    if (isLocallyHotlisted(cardUid)) {
+      const wait = localHotlistSecondsLeft(cardUid);
+      instantTapFail(`Same card — wait ${wait}s`);
+      return;
     }
 
+    const tapPayload = {
+      card_uid: cardUid,
+      driver_id: user.id,
+      shuttle_id: shuttle.id,
+      route,
+      vehicle_no: shuttle.vehicleNo,
+    };
+
+    const cached = resolveCardFromCache(cardUid);
+    const student = cached
+      ? { name: cached.name, regNo: cached.regNo || cached.reg_no }
+      : null;
+
+    if (!isOnline()) {
+      if (student) {
+        enqueueTap({ ...tapPayload, userName: student.name, userRegNo: student.regNo });
+        setOfflinePending(pendingCount());
+        instantTapSuccess(cardUid, student, true);
+      } else {
+        instantTapFail('Unknown card — connect to verify');
+      }
+      return;
+    }
+
+    if (student) {
+      instantTapSuccess(cardUid, student);
+      chargeTapInBackground(tapPayload, cardUid, student);
+      return;
+    }
+
+    setTap({ state: 'scan', text: 'Checking card…' });
+    setShowPopup(true);
+    try {
+      const result = await postTapToServer(tapPayload);
+      if (result.ok) {
+        const data = result.data;
+        instantTapSuccess(cardUid, {
+          name: data.userName,
+          regNo: data.userRegNo,
+        });
+        refresh();
+      } else {
+        instantTapFail(result.error || 'Invalid card');
+      }
+    } catch {
+      instantTapFail('Network error');
+    }
+  }
+
+  function dismissTapPopup(ms = 1200) {
     setTimeout(() => {
-      setTap(prev => prev.state !== 'fail' ? { state: 'idle', text: nfcMode === 'mobile' ? '📱 Mobile NFC listening...' : nfcMode === 'usb' ? '🔌 USB NFC listening...' : 'NFC ready' } : prev);
+      setTap((prev) =>
+        prev.state !== 'fail'
+          ? {
+              state: 'idle',
+              text:
+                nfcMode === 'mobile'
+                  ? '📱 Mobile NFC listening...'
+                  : nfcMode === 'usb'
+                    ? '🔌 USB NFC listening...'
+                    : 'NFC ready',
+            }
+          : prev
+      );
       setShowPopup(false);
-    }, 4000);
+    }, ms);
   }
 
   // ── Real NFC Mobile Tap (Web NFC API) ──────────────────────────────────────
@@ -577,6 +738,17 @@ export default function Driver() {
             <p className="muted" style={{ fontSize: '11px', marginTop: '5px' }}>
               {nfcMode === 'mobile' ? 'Hold student NFC card to back of phone.' : nfcMode === 'usb' ? 'Present student card to USB reader.' : 'Select a tap method above or use demo simulate.'}
             </p>
+            {(!isOnline() || offlinePending > 0) && (
+              <div style={{ marginTop: '10px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#9a3412' }}>
+                {!isOnline() && <div style={{ fontWeight: 'bold' }}>📴 Offline mode — taps saved on this device</div>}
+                {offlinePending > 0 && (
+                  <div style={{ marginTop: '4px' }}>
+                    {offlinePending} tap(s) waiting to upload when internet returns.
+                  </div>
+                )}
+                {syncStatus && <div style={{ marginTop: '4px', color: '#166534' }}>{syncStatus}</div>}
+              </div>
+            )}
             {/* Hotlist countdown */}
             {hotlistCountdown > 0 && (
               <div style={{ marginTop: '10px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -675,7 +847,9 @@ export default function Driver() {
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto', fontSize: '12px', borderBottom: '1px solid var(--line)', padding: '6px 0', gap: '8px' }}>
                     <div>
                       <div style={{ fontWeight: 'bold', color: 'var(--ink)' }}>{t.name} <small style={{ color: 'var(--muted)', fontWeight: 'normal' }}>({t.regNo})</small></div>
-                      <div style={{ color: 'var(--muted)', fontSize: '11px' }}>🕒 {t.time}</div>
+                      <div style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                        🕒 {t.time}{t.offline ? ' · queued offline' : ''}
+                      </div>
                     </div>
                     <strong style={{ color: 'var(--green)', alignSelf: 'center' }}>{money(t.amount)}</strong>
                   </div>

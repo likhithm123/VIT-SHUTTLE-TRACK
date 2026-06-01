@@ -184,3 +184,122 @@ BEGIN
   RETURN jsonb_build_object('tx_id', p_tx_id, 'wallet_balance', v_balance);
 END;
 $$;
+
+-- 13. FAST TAP (one DB round-trip: validate card, charge fare, hotlist)
+CREATE OR REPLACE FUNCTION public.sp_process_tap(
+  p_card_uid TEXT,
+  p_driver_id UUID,
+  p_shuttle_id TEXT,
+  p_route TEXT,
+  p_vehicle_no TEXT,
+  p_tx_id TEXT,
+  p_fare DECIMAL DEFAULT 15,
+  p_hotlist_ms BIGINT DEFAULT 10000,
+  p_queue_id TEXT DEFAULT NULL,
+  p_queued_at TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_now BIGINT;
+  v_hot_exp BIGINT;
+  v_user_id UUID;
+  v_user_name TEXT;
+  v_user_reg TEXT;
+  v_balance DECIMAL(12, 2);
+  v_due_amount DECIMAL(12, 2);
+  v_due_since TIMESTAMPTZ;
+  v_created_at TIMESTAMPTZ := NOW();
+BEGIN
+  IF p_card_uid IS NULL OR trim(p_card_uid) = '' THEN
+    RAISE EXCEPTION 'card_uid required';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.transactions WHERE id = p_tx_id) THEN
+    SELECT u.name, u.reg_no, t.created_at
+    INTO v_user_name, v_user_reg, v_created_at
+    FROM public.transactions t
+    JOIN public.users u ON u.id = t.user_id
+    WHERE t.id = p_tx_id;
+    RETURN jsonb_build_object(
+      'ok', true,
+      'synced', true,
+      'user_name', v_user_name,
+      'user_reg_no', v_user_reg,
+      'tap_time', v_created_at,
+      'card_uid', p_card_uid
+    );
+  END IF;
+
+  v_now := (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT;
+  SELECT expires_at INTO v_hot_exp FROM public.hotlist WHERE card_uid = p_card_uid;
+  IF v_hot_exp IS NOT NULL AND v_now < v_hot_exp THEN
+    RAISE EXCEPTION 'Card is hotlisted. Please wait % seconds.',
+      ceil((v_hot_exp - v_now)::numeric / 1000);
+  END IF;
+
+  SELECT id, name, reg_no INTO v_user_id, v_user_name, v_user_reg
+  FROM public.users
+  WHERE card_uid = p_card_uid AND role = 'student'
+  LIMIT 1;
+
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Card not mapped to any user';
+  END IF;
+
+  SELECT balance INTO v_balance FROM public.wallets WHERE user_id = v_user_id;
+  v_balance := COALESCE(v_balance, 0);
+
+  SELECT amount, since INTO v_due_amount, v_due_since FROM public.dues WHERE user_id = v_user_id;
+
+  IF v_balance < p_fare THEN
+    v_due_amount := COALESCE(v_due_amount, 0) + (p_fare - v_balance);
+    INSERT INTO public.dues (user_id, amount, since)
+    VALUES (v_user_id, v_due_amount, COALESCE(v_due_since, NOW()))
+    ON CONFLICT (user_id) DO UPDATE
+    SET amount = EXCLUDED.amount, since = COALESCE(public.dues.since, EXCLUDED.since);
+    INSERT INTO public.wallets (user_id, balance) VALUES (v_user_id, 0)
+    ON CONFLICT (user_id) DO UPDATE SET balance = 0;
+  ELSE
+    INSERT INTO public.wallets (user_id, balance)
+    VALUES (v_user_id, v_balance - p_fare)
+    ON CONFLICT (user_id) DO UPDATE SET balance = v_balance - p_fare;
+  END IF;
+
+  INSERT INTO public.transactions (id, user_id, driver_id, shuttle_id, route, amount, status, metadata, created_at)
+  VALUES (
+    p_tx_id,
+    v_user_id,
+    p_driver_id,
+    p_shuttle_id,
+    COALESCE(p_route, 'A'),
+    p_fare,
+    'success',
+    jsonb_build_object(
+      'card_uid', p_card_uid,
+      'vehicle_no', COALESCE(p_vehicle_no, 'Vehicle'),
+      'route', COALESCE(p_route, 'A'),
+      'queue_id', p_queue_id,
+      'queued_at', p_queued_at,
+      'offline_sync', p_queue_id IS NOT NULL
+    ),
+    v_created_at
+  );
+
+  INSERT INTO public.hotlist (card_uid, expires_at)
+  VALUES (p_card_uid, v_now + p_hotlist_ms)
+  ON CONFLICT (card_uid) DO UPDATE SET expires_at = EXCLUDED.expires_at;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'user_name', v_user_name,
+    'user_reg_no', v_user_reg,
+    'tap_time', v_created_at,
+    'card_uid', p_card_uid,
+    'tx_id', p_tx_id
+  );
+END;
+$$;
